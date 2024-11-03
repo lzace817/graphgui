@@ -1,5 +1,5 @@
 # A simple directed graph drawing tool with raylib
-
+![sample](./pictures/sample.png)
 > [!WARNING]
 > this is work in progress
 
