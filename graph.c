@@ -2,22 +2,30 @@
 #include "raymath.h"
 #include <stddef.h>
 #include <assert.h>
-// #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "raygui.h"
+#include "style_dark.h"
+#include "subwindows.c"
 
 #define ARRAY_LENGTH(array)  sizeof(array)/sizeof(array[0])
 
 #define SCREEN_WIDTH 600
 #define SCREEN_HEGHT 400
+#define ORIGIN_LINE_LEN 40
+#define ORIGIN_CIRCLE_RADIUS 15
 #define NODE_RADIUS 40
 #define NODE_BORDER 4
 #define BACKGROUND_COLOR CLITERAL(Color){20,20,20,255}
 #define HOVER_COLOR CLITERAL(Color){40,40,40,255}
+#define ORIGIN_COLOR CLITERAL(Color){255,255,255,255}
 #define HOVER_MARGIN 10
 #define CONTROL_RADIUS 6
 #define MIN_CONTROL_DISTANCE 60
 #define ARROW_HALF_BASE 8
 #define ARROW_LEN 20
 #define UI_FONT_SIZE 25.0f
+#define BORDER_COLOR CLITERAL(Color){40,40,40,255}
 
 typedef struct Edge {
     int from;
@@ -73,12 +81,22 @@ enum EdgeItems{
 };
 
 enum IdType {
-    IT_NONE,
     IT_NODE,
     IT_EDGE,
     IT_LABEL,
     IT_CRTL_PT1,
     IT_CRTL_PT2,
+    IT_DRAWING,
+    IT_WINDOW,
+
+    IT_NONE = -1,
+};
+
+enum ToolId {
+    TI_CURSOR,
+    TI_ADD_NODE,
+    TI_REM_NODE,
+    TI_DEBUG,
 };
 
 static Color global_graph_colors[] = {
@@ -133,10 +151,17 @@ void compute_edge_geo(EdgeGeo *geo, Vector2 n1, Vector2 n2, Vector2 c1, Vector2 
 
 int main(void)
 {
+    // enable debug tracing
+    SetTraceLogLevel(LOG_DEBUG);
+
     InitWindow(SCREEN_WIDTH, SCREEN_HEGHT, "graph primitives");
     SetExitKey(KEY_Q);
     GraphCtx ctx;
     ctx.font = LoadFontEx("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", UI_FONT_SIZE, 0, 250);
+    GuiLoadStyleDark();
+
+    Camera2D camera = {0};
+    camera.zoom = 1.0f;
 
     Vector2 nodes[] = {
         {SCREEN_WIDTH/3, SCREEN_HEGHT/2},
@@ -171,123 +196,225 @@ int main(void)
     ctx.id_type = IT_NONE;
     Vector2 selected_offset = {0};
     Vector2 *attached_node = NULL;
+    int active_tool = TI_CURSOR;
+    Vector2 preview_node;
+    Rectangle drawing_area = {96, 0, SCREEN_WIDTH - 96, SCREEN_HEGHT};
+    NodePropWnd nodewnd = {0};
     // bool hovering = true;
 
 
     SetTargetFPS(30);
 
     while(!WindowShouldClose()) {
-        if(IsKeyPressed(KEY_C)) ctx.show_control_pts = !ctx.show_control_pts;
-
-        // move nodes
-        if(ctx.id_type == IT_NODE && ctx.active >= 0) {
-            nodes[ctx.active] = Vector2Add(GetMousePosition(), selected_offset);
-        }
-
-        // move edges
-        if(ctx.id_type == IT_LABEL && ctx.active >= 0) {
-            edges[ctx.active].loffset = Vector2Add(GetMousePosition(), selected_offset);
-        }
-
-        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)){
-            ctx.focused = -1;
-            ctx.active = -1;
-            ctx.id_type = IT_NONE;
-        }
-
-        if (ctx.active < 0)
-            ctx.focused = -1;
-
-        // all nodes
-        for(size_t i = 0; i < ARRAY_LENGTH(nodes); i++){
-            if(CheckCollisionPointCircle(GetMousePosition(), nodes[i], NODE_RADIUS)){
-                focus(IT_NODE, i);
-                if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                    ctx.active = i;
-                    selected_offset = Vector2Subtract(nodes[i], GetMousePosition());
-                }
-                break;
-            }
-        }
-
-        // all edges
-        for(size_t i = 0; i < ARRAY_LENGTH(edges); i++) {
-            Edge e = edges[i];
-            // control point 1
-            compute_edge_geo(edge_geo + i, nodes[e.from], nodes[e.to],
-                e.ctrl[0], e.ctrl[1], e.loffset, e.label, &ctx);
-
-            if(ctx.show_control_pts) {
-
-                if(CheckCollisionPointCircle(GetMousePosition(),
-                        edge_geo[i].points[EI_C1A], CONTROL_RADIUS))
-                {
-                    focus(IT_CRTL_PT1, i);
-                    if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                        ctx.active = i;
-                        ctx.id_type = IT_CRTL_PT1;
-                        attached_node = &nodes[e.from];
-                    }
-                    break;
-                }
-
-                // control point 2
-                if(CheckCollisionPointCircle(GetMousePosition(),
-                        edge_geo[i].points[EI_C2A], CONTROL_RADIUS))
-                {
-                    focus(IT_CRTL_PT2, i);
-                    if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                        ctx.active = i;
-                        ctx.id_type = IT_CRTL_PT2;
-                        attached_node = &nodes[e.to];
-                    }
-                    break;
-                }
-            }
-
-            // label
-            Rectangle rec = label_rect(edge_geo + i);
-            if(CheckCollisionPointRec(GetMousePosition(), rec)) {
-                focus(IT_LABEL, i);
-                if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                    ctx.active = i;
-                    ctx.id_type = IT_LABEL;
-                    selected_offset = Vector2Subtract(e.loffset, GetMousePosition());
-                }
-            }
-        }
-
-        // move control points
-        if((ctx.id_type == IT_CRTL_PT1 || ctx.id_type == IT_CRTL_PT2 ) &&
-                ctx.active >= 0)
+        // pan control
+        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
         {
-            Vector2 new_ctrl_pos = Vector2Subtract(GetMousePosition(),
-                    *attached_node);
-            float d = Vector2Length(new_ctrl_pos);
-            if (d < 0.1f) {
-                new_ctrl_pos = (Vector2){MIN_CONTROL_DISTANCE,0};
-            }
-            else if (d < MIN_CONTROL_DISTANCE) new_ctrl_pos = Vector2Scale(
-                    new_ctrl_pos, MIN_CONTROL_DISTANCE/d);
-            edges[ctx.active].ctrl[ctx.id_type - IT_CRTL_PT1] = new_ctrl_pos;
+            Vector2 delta = GetMouseDelta();
+            delta = Vector2Scale(delta, -1.0f);
+            camera.target = Vector2Add(camera.target, delta);
         }
+
+        Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
+
+        if (IsKeyPressed(KEY_D)) {
+            TraceLog(LOG_DEBUG, "item active/focused: %d, %d, %d", ctx.id_type, ctx.active, ctx.focused);
+        }
+
+        if (active_tool == TI_CURSOR) {
+            // if (IsKeyPressed(KEY_C))
+            //     ctx.show_control_pts = !ctx.show_control_pts;
+
+            // move nodes
+            if (ctx.id_type == IT_NODE && ctx.active >= 0) {
+                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    ctx.focused = -1;
+                    ctx.active  = -1;
+                    ctx.id_type = -1;
+                } else
+                nodes[ctx.active] = Vector2Add(mouseWorldPos, selected_offset);
+            }
+
+            // move edges
+            if (ctx.id_type == IT_LABEL && ctx.active >= 0) {
+                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    ctx.focused = -1;
+                    ctx.active  = -1;
+                    ctx.id_type = -1;
+                } else
+
+                edges[ctx.active].loffset = Vector2Add(mouseWorldPos, selected_offset);
+            }
+
+            if (ctx.active < 0) {
+                ctx.focused = -1;
+                ctx.id_type = -1;
+                ctx.active = -1;
+            }
+
+            // all nodes
+            for (size_t i = 0; i < ARRAY_LENGTH(nodes); i++) {
+                if (CheckCollisionPointCircle(mouseWorldPos, nodes[i], NODE_RADIUS)) {
+                    focus(IT_NODE, i);
+                }
+                if (ctx.id_type == IT_NODE && ctx.focused == (int)i) {
+                    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                        ctx.active      = i;
+                        selected_offset = Vector2Subtract(nodes[i], mouseWorldPos);
+                    }
+                    break;
+                }
+            }
+
+            // all edges
+            if (ctx.id_type == IT_CRTL_PT1 || ctx.id_type == IT_CRTL_PT2) {
+                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    ctx.id_type = -1;
+                    ctx.active = -1;
+                    ctx.focused = -1;
+                }
+            }
+            for (size_t i = 0; i < ARRAY_LENGTH(edges); i++) {
+                Edge e = edges[i];
+                compute_edge_geo(edge_geo + i, nodes[e.from], nodes[e.to], e.ctrl[0], e.ctrl[1],
+                                 e.loffset, e.label, &ctx);
+
+                if (ctx.show_control_pts) {
+                    // control point 1
+                    if (CheckCollisionPointCircle(mouseWorldPos, edge_geo[i].points[EI_C1A],
+                                                  CONTROL_RADIUS)) {
+                        focus(IT_CRTL_PT1, i);
+                        // TraceLog(LOG_DEBUG, "control 1");
+                    }
+                    if (ctx.id_type == IT_CRTL_PT1 && ctx.focused == (int)i) {
+                        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                            ctx.active    = i;
+                            ctx.id_type   = IT_CRTL_PT1;
+                            attached_node = &nodes[e.from];
+                        }
+                        break;
+                    }
+
+
+                    // control point 2
+
+                    if (CheckCollisionPointCircle(mouseWorldPos, edge_geo[i].points[EI_C2A],
+                                                  CONTROL_RADIUS)) {
+                        focus(IT_CRTL_PT2, i);
+                        // TraceLog(LOG_DEBUG, "control 2");
+                    }
+                    if (ctx.id_type == IT_CRTL_PT2 && ctx.focused == (int)i) {
+                        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                            ctx.active    = i;
+                            ctx.id_type   = IT_CRTL_PT2;
+                            attached_node = &nodes[e.to];
+                        }
+                        break;
+                    }
+                }
+
+                // label
+                Rectangle rec = label_rect(edge_geo + i);
+                if (CheckCollisionPointRec(mouseWorldPos, rec)) {
+                    focus(IT_LABEL, i);
+                }
+                if (ctx.id_type == IT_LABEL && ctx.focused == (int)i) {
+                    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                        ctx.active      = i;
+                        ctx.id_type     = IT_LABEL;
+                        selected_offset = Vector2Subtract(e.loffset, mouseWorldPos);
+                    }
+                    break;
+                }
+            }
+
+            // move control points
+            if ((ctx.id_type == IT_CRTL_PT1 || ctx.id_type == IT_CRTL_PT2) && ctx.active >= 0) {
+                Vector2 new_ctrl_pos = Vector2Subtract(mouseWorldPos, *attached_node);
+                float d              = Vector2Length(new_ctrl_pos);
+                if (d < 0.1f) {
+                    new_ctrl_pos = (Vector2){ MIN_CONTROL_DISTANCE, 0 };
+                } else if (d < MIN_CONTROL_DISTANCE)
+                    new_ctrl_pos = Vector2Scale(new_ctrl_pos, MIN_CONTROL_DISTANCE / d);
+                edges[ctx.active].ctrl[ctx.id_type - IT_CRTL_PT1] = new_ctrl_pos;
+            }
+        } else
+        if (active_tool == TI_ADD_NODE) {
+            if (ctx.active < 0) {
+                ctx.focused = -1;
+                ctx.id_type = -1;
+                ctx.active = -1;
+            }
+            preview_node = mouseWorldPos;
+            if (ctx.id_type == IT_DRAWING && ctx.active == 0) {
+                if(IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+                    if (CheckCollisionPointRec(GetMousePosition(), drawing_area)){
+                        TraceLog(LOG_DEBUG, "node placed at: %f, %f", preview_node.x, preview_node.y);
+                    }
+                    ctx.focused = -1;
+                    ctx.id_type = -1;
+                    ctx.active = -1;
+                }
+            }
+            if(CheckCollisionPointRec(GetMousePosition(), drawing_area))
+            {
+                focus(IT_DRAWING, 0);
+            }
+            if (ctx.id_type == IT_DRAWING && ctx.focused == 0) {
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                    ctx.active = 0;
+                    ctx.id_type = IT_DRAWING;
+                }
+            }
+        }
+
 
 
 
         // ########################## DRAWING #########################################
         BeginDrawing();
+
             ClearBackground(BACKGROUND_COLOR);
 
-            for(size_t i = 0; i < ARRAY_LENGTH(nodes); i++){
-                draw_node(nodes[i], ctx.id_type == IT_NODE && ctx.focused == (int)i);
-            }
+            DrawLine(drawing_area.x, 0, drawing_area.x, drawing_area.height, BORDER_COLOR);
 
-            for(size_t i = 0; i < ARRAY_LENGTH(edges); i++) {
-                Edge edge = edges[i];
-                draw_edge(edge_geo + i, i, edge.label, &ctx);
+            BeginScissorMode(drawing_area.x, drawing_area.y, drawing_area.width, drawing_area.height);
+            // draw origin
+            Vector2 origin = GetWorldToScreen2D((Vector2){0}, camera);
+            DrawLine(origin.x - ORIGIN_LINE_LEN/2, origin.y, origin.x + ORIGIN_LINE_LEN/2, origin.y, ORIGIN_COLOR);
+            DrawLine(origin.x , origin.y - ORIGIN_LINE_LEN/2, origin.x, origin.y + ORIGIN_LINE_LEN/2, ORIGIN_COLOR);
+            DrawCircleLinesV(origin, ORIGIN_CIRCLE_RADIUS, ORIGIN_COLOR);
+            BeginMode2D(camera);
+                for(size_t i = 0; i < ARRAY_LENGTH(nodes); i++){
+                    draw_node(nodes[i], ctx.id_type == IT_NODE && ctx.focused == (int)i);
+                }
+
+                for(size_t i = 0; i < ARRAY_LENGTH(edges); i++) {
+                    Edge edge = edges[i];
+                    draw_edge(edge_geo + i, i, edge.label, &ctx);
+                }
+                // DrawTextEx(ctx.font, "press C to toggle control points", (Vector2){10,10},
+                //         UI_FONT_SIZE, 2.0f, WHITE);
+                if (ctx.id_type == IT_DRAWING) {
+                    draw_node(preview_node, false);
+                }
+            EndMode2D();
+            EndScissorMode();
+
+            GuiToggle((Rectangle){10, 10, 80,30}, "Ctrl pts", &ctx.show_control_pts);
+            GuiToggleGroup((Rectangle){ 10, 50, 30, 30 }, "#21#\n#23#\n#28#\n#128#", &active_tool);
+            if (GuiButton((Rectangle){ 10, 180, 64, 30 }, "window")) {
+                memset(&nodewnd, 0, sizeof(nodewnd));
+                // nodewnd.active = true;
+                ctx.id_type = IT_WINDOW;
+                ctx.active = 0;
             }
-            DrawTextEx(ctx.font, "press C to toggle control points", (Vector2){10,10},
-                    UI_FONT_SIZE, 2.0f, WHITE);
+            if (ctx.id_type == IT_WINDOW && ctx.active == 0) {
+                int active = GuiNodeProperty(&nodewnd, (Vector2){100,100});
+                if (! active) {
+                    ctx.id_type = -1;
+                    ctx.active = -1;
+                }
+            }
 
         EndDrawing();
     }
@@ -310,7 +437,7 @@ void draw_edge(EdgeGeo *geo, int id, const char *label, GraphCtx *ctx)
 
     Vector2 lpos = geo->points[EI_LPOS];
     Rectangle rec = label_rect(geo);
-    if (CheckCollisionPointRec(GetMousePosition(), rec)) DrawRectangleRec(rec,
+    if (ctx->id_type == IT_LABEL && ctx->focused == id ) DrawRectangleRec(rec,
             graph_color(GC_LABEL_BACKGROUND_HOVER));
     DrawTextEx(ctx->font, label, lpos, UI_FONT_SIZE, 2.0f, graph_color(GC_LABEL));
 
@@ -329,8 +456,6 @@ void draw_edge(EdgeGeo *geo, int id, const char *label, GraphCtx *ctx)
                 graph_color(GC_CONTROL_SELECTED):graph_color(GC_CONTROL));
         DrawCircleV(c2a, 6, (ctx->id_type == IT_CRTL_PT2 && id == ctx->focused)?
                 graph_color(GC_CONTROL_SELECTED):graph_color(GC_CONTROL));
-
-
     }
 }
 

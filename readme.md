@@ -9,7 +9,8 @@ This is a simple project, for learning purposes, exploring the functionality of 
 copy the raylib source to `raylib` folder and run:
 ``` bash
 pushd raylib/raylib-5.0/src
-make -DRAYLIB_MODULE_RAYGUI=TRUE
+# make RAYLIB_MODULE_RAYGUI=TRUE
+make RAYLIB_MODULE_RAYGUI=TRUE RAYLIB_MODULE_RAYGUI_PATH=../examples/shapes
 popd
 ./build.sh
 ```
