@@ -8,7 +8,8 @@
 #include "style_dark.h"
 #include "subwindows.c"
 
-#define ARRAY_LENGTH(array)  sizeof(array)/sizeof(array[0])
+#define COMMONS_IMPLEMENTATION
+#include "commons.h"
 
 #define SCREEN_WIDTH 600
 #define SCREEN_HEGHT 400
@@ -32,10 +33,11 @@ typedef struct Edge {
     int to;
     Vector2 ctrl[2];
     Vector2 loffset;
-    const char label[16]; // TODO: make it resizeable
+    char label[16]; // TODO: make it resizeable
 } Edge;
 
 typedef struct GraphCtx {
+    float  zoom_coef;
     Font font;
     int focused;
     int active;
@@ -110,7 +112,7 @@ static Color global_graph_colors[] = {
     [GC_LABEL_BACKGROUND_HOVER] = {255,255,255, 51},
 };
 
-static_assert(ARRAY_LENGTH(global_graph_colors) == GC_NUM_ITEMS);
+static_assert(ARRAYSIZE(global_graph_colors) == GC_NUM_ITEMS);
 #define internal static
 
 #define focus(type, id)           \
@@ -154,7 +156,7 @@ int main(void)
     // enable debug tracing
     SetTraceLogLevel(LOG_DEBUG);
 
-    InitWindow(SCREEN_WIDTH, SCREEN_HEGHT, "graph primitives");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEGHT, "graphgui");
     SetExitKey(KEY_Q);
     GraphCtx ctx;
     ctx.font = LoadFontEx("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", UI_FONT_SIZE, 0, 250);
@@ -162,31 +164,56 @@ int main(void)
 
     Camera2D camera = {0};
     camera.zoom = 1.0f;
+    float scrollSpeed = 0.2f;
 
-    Vector2 nodes[] = {
-        {SCREEN_WIDTH/3, SCREEN_HEGHT/2},
-        {2*SCREEN_WIDTH/3, SCREEN_HEGHT/2},
-        {SCREEN_WIDTH/2, SCREEN_HEGHT*0.7f},
+    Vector2 *nodes = NULL;
+    {
+        Vector2 v1 = {SCREEN_WIDTH/3, SCREEN_HEGHT/2};
+        Vector2 v2 = {2*SCREEN_WIDTH/3, SCREEN_HEGHT/2};
+        Vector2 v3 = {SCREEN_WIDTH/2, SCREEN_HEGHT*0.7f};
+        da_append(nodes, v1);
+        da_append(nodes, v2);
+        da_append(nodes, v3);
     };
 
-    Edge edges[] = {
-        {
+    Edge *edges = NULL;
+    {
+        da_append(edges, ((Edge){
             0, 1, {
                 { 100, -5},
                 {0, -120}
             },
             {0, 0},
             "hello"
-        },
-        {
+        }));
+
+        da_append(edges, ((Edge){
             0, 2, {
                 { 0, 80},
-                {-60, 0}
+                {-75, 0}
             },
             {0, 0},
             "world"
-        },
-    };
+        }));
+
+        da_append(edges, ((Edge){
+            1, 2, {
+                { 0, 100},
+                {70, 60}
+            },
+            {0, 0},
+            "!"
+        }));
+
+        da_append(edges, ((Edge){
+            1, 1, {
+                { 90, -50},
+                {90, 50}
+            },
+            {0, 0},
+            "repeat"
+        }));
+    }
 
     EdgeGeo edge_geo[2];
 
@@ -206,18 +233,28 @@ int main(void)
     SetTargetFPS(30);
 
     while(!WindowShouldClose()) {
+        // camera.zoom += (int)(GetMouseWheelMove()*scrollSpeed);
+        {
+            float new_zoom = camera.zoom + ((float)GetMouseWheelMove()*0.05f);
+            if(new_zoom < 0.05f) new_zoom = 0.05f;
+            float s = (new_zoom - camera.zoom)/(new_zoom*camera.zoom);
+            camera.target = Vector2Add(camera.target, Vector2Scale(GetMousePosition(), s));
+            camera.zoom = new_zoom;
+        }
         // pan control
         if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
         {
             Vector2 delta = GetMouseDelta();
-            delta = Vector2Scale(delta, -1.0f);
+            delta = Vector2Scale(delta, -1.0f/camera.zoom);
             camera.target = Vector2Add(camera.target, delta);
         }
 
         Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
 
         if (IsKeyPressed(KEY_D)) {
-            TraceLog(LOG_DEBUG, "item active/focused: %d, %d, %d", ctx.id_type, ctx.active, ctx.focused);
+            // TraceLog(LOG_DEBUG, "item active/focused: %d, %d, %d", ctx.id_type, ctx.active, ctx.focused);
+            TraceLog(LOG_DEBUG, "camera zoom %f", camera.zoom);
+            // TraceLog(LOG_DEBUG, "wheel %f", GetMouseWheelMove());
         }
 
         if (active_tool == TI_CURSOR) {
@@ -252,7 +289,7 @@ int main(void)
             }
 
             // all nodes
-            for (size_t i = 0; i < ARRAY_LENGTH(nodes); i++) {
+            for (size_t i = 0; i < da_size(nodes); i++) {
                 if (CheckCollisionPointCircle(mouseWorldPos, nodes[i], NODE_RADIUS)) {
                     focus(IT_NODE, i);
                 }
@@ -273,7 +310,8 @@ int main(void)
                     ctx.focused = -1;
                 }
             }
-            for (size_t i = 0; i < ARRAY_LENGTH(edges); i++) {
+            float control_radius_world = CONTROL_RADIUS / camera.zoom;
+            for (size_t i = 0; i < da_size(edges); i++) {
                 Edge e = edges[i];
                 compute_edge_geo(edge_geo + i, nodes[e.from], nodes[e.to], e.ctrl[0], e.ctrl[1],
                                  e.loffset, e.label, &ctx);
@@ -281,7 +319,7 @@ int main(void)
                 if (ctx.show_control_pts) {
                     // control point 1
                     if (CheckCollisionPointCircle(mouseWorldPos, edge_geo[i].points[EI_C1A],
-                                                  CONTROL_RADIUS)) {
+                                                  control_radius_world )) {
                         focus(IT_CRTL_PT1, i);
                         // TraceLog(LOG_DEBUG, "control 1");
                     }
@@ -298,7 +336,7 @@ int main(void)
                     // control point 2
 
                     if (CheckCollisionPointCircle(mouseWorldPos, edge_geo[i].points[EI_C2A],
-                                                  CONTROL_RADIUS)) {
+                                                  control_radius_world)) {
                         focus(IT_CRTL_PT2, i);
                         // TraceLog(LOG_DEBUG, "control 2");
                     }
@@ -348,6 +386,7 @@ int main(void)
             if (ctx.id_type == IT_DRAWING && ctx.active == 0) {
                 if(IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
                     if (CheckCollisionPointRec(GetMousePosition(), drawing_area)){
+                        // da_append(nodes, mouseWorldPos);
                         TraceLog(LOG_DEBUG, "node placed at: %f, %f", preview_node.x, preview_node.y);
                     }
                     ctx.focused = -1;
@@ -371,6 +410,7 @@ int main(void)
 
 
         // ########################## DRAWING #########################################
+        ctx.zoom_coef = 1.0f/camera.zoom;
         BeginDrawing();
 
             ClearBackground(BACKGROUND_COLOR);
@@ -384,11 +424,11 @@ int main(void)
             DrawLine(origin.x , origin.y - ORIGIN_LINE_LEN/2, origin.x, origin.y + ORIGIN_LINE_LEN/2, ORIGIN_COLOR);
             DrawCircleLinesV(origin, ORIGIN_CIRCLE_RADIUS, ORIGIN_COLOR);
             BeginMode2D(camera);
-                for(size_t i = 0; i < ARRAY_LENGTH(nodes); i++){
+                for(size_t i = 0; i < da_size(nodes); i++){
                     draw_node(nodes[i], ctx.id_type == IT_NODE && ctx.focused == (int)i);
                 }
 
-                for(size_t i = 0; i < ARRAY_LENGTH(edges); i++) {
+                for(size_t i = 0; i < da_size(edges); i++) {
                     Edge edge = edges[i];
                     draw_edge(edge_geo + i, i, edge.label, &ctx);
                 }
@@ -445,6 +485,7 @@ void draw_edge(EdgeGeo *geo, int id, const char *label, GraphCtx *ctx)
     DrawTriangleFan(geo->points + EI_TIP, 3, edge_color);
 
     if (ctx->show_control_pts) {
+        float ctrl_radius = CONTROL_RADIUS * ctx->zoom_coef;
         Vector2 bs = geo->points[EI_BS];
         Vector2 be = geo->points[EI_BE];
         Vector2 c1a = geo->points[EI_C1A];
@@ -452,9 +493,9 @@ void draw_edge(EdgeGeo *geo, int id, const char *label, GraphCtx *ctx)
         DrawLineV(bs, c1a, graph_color(GC_CONTROL_LINE));
         DrawLineV(be, c2a, graph_color(GC_CONTROL_LINE));
 
-        DrawCircleV(c1a, 6, (ctx->id_type == IT_CRTL_PT1 && id == ctx->focused)?
+        DrawCircleV(c1a, ctrl_radius, (ctx->id_type == IT_CRTL_PT1 && id == ctx->focused)?
                 graph_color(GC_CONTROL_SELECTED):graph_color(GC_CONTROL));
-        DrawCircleV(c2a, 6, (ctx->id_type == IT_CRTL_PT2 && id == ctx->focused)?
+        DrawCircleV(c2a, ctrl_radius, (ctx->id_type == IT_CRTL_PT2 && id == ctx->focused)?
                 graph_color(GC_CONTROL_SELECTED):graph_color(GC_CONTROL));
     }
 }
