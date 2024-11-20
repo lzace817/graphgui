@@ -213,9 +213,12 @@ int main(void)
             {0, 0},
             "repeat"
         }));
+
     }
 
-    EdgeGeo edge_geo[2];
+    EdgeGeo *edge_geo = NULL;
+    for(size_t i = 0; i < da_size(edges); i++)
+        da_append(edge_geo, (EdgeGeo){0});
 
     ctx.show_control_pts = false;
     ctx.focused = -1;
@@ -458,6 +461,10 @@ int main(void)
 
         EndDrawing();
     }
+
+    da_free(nodes);
+    da_free(edges);
+    da_free(edge_geo);
 
     UnloadFont(ctx.font);
     CloseWindow();
