@@ -1,3 +1,48 @@
+/** # common stuff for C
+
+    - dynamic arrays
+    - arena allocator
+    - and other basics
+
+    ## dynamic arrays
+
+    using libc:
+    - da_append(sa, x)
+    - da_append_many(da, items, num_items)
+    - da_size(da)
+    - da_pop(sa)
+    - da_free(da)
+    - sb_append_cstr(sb, str)
+
+    NOTE: you can change the size of a dynamic array assigning to `da_size(da)`
+    ``` C
+    da_size(da) = 0;
+    ```
+
+    and the version using arena as allocator
+    - arena_da_append(arena, sa, x)
+    - arena_da_append_many(arena, da, items, num_items)
+    - arena_sb_append_cstr(arena, sb, str)
+
+    ## arena allocator
+
+    void * arena_push_size(Arena *a, size_t size);
+    void   arena_reset(Arena *a);
+    void   arena_free(Arena *a);
+    Arena_Mark arena_snapshot(Arena *a);
+    void   arena_rewind(Arena *a, Arena_Mark m);
+    void   arena_set_allign(Arena *a, int allign);
+    void   arena_status(Arena *a);
+
+    ## miscelaneous
+
+    - ARRAYSIZE(array)
+    - internal
+    - global_variable
+    - TODO(msg)
+    - UNREACHEABLE(fmt)
+
+ */
 #ifndef COMMONS_H
 #define COMMONS_H
 
@@ -10,6 +55,10 @@
 #define ARRAYSIZE(array) sizeof(array) / sizeof(*(array))
 #define internal static
 #define global_variable static
+
+// NOTE: would be interesting to have some sort of compile time
+// warning if compiler dectect we are assigning to dummy size_t
+#define DUMMY_SIZE_T ((size_t){0})
 
 #define TODO(msg) do{fprintf(stderr, "%s:%i: TODO: " msg "\n", __FILE__,      \
         __LINE__ ); abort();}while(0)
@@ -29,10 +78,16 @@ typedef struct Dynamic_Array_Header {
  *     da_size(da)              | number if items in da
  *
  */
+#define DA_INITIAL_CAP 8
+#define LIBC_ALLOCATED 0x673e82d2 // echo -n realocate_stretch_array | md5sum
+
 #define _DA_HDR(sa) ((Dynamic_Array_Header*)((uintptr_t)(sa) -                \
         sizeof(Dynamic_Array_Header)))
-#define da_size(da) (*(((da))?&(_DA_HDR((da))->size) : (size_t *)&stub_size))
+
+#define da_size(da) (*(((da))?&(_DA_HDR((da))->size) : &DUMMY_SIZE_T))
+
 #define da_end(sa) ((sa) + da_size(sa))
+
 #define da_append(sa, x)                                                      \
     do {                                                                      \
         if((sa) == NULL || !(_DA_HDR((sa))->size + 1 <= _DA_HDR((sa))->cap)) {\
@@ -45,12 +100,14 @@ typedef struct Dynamic_Array_Header {
 #define arena_da_append(arena, sa, x)                                         \
     do {                                                                      \
         if((sa) == NULL || !(_DA_HDR((sa))->size < _DA_HDR((sa))->cap)) {     \
-            (sa) = arena_da_realoc((arena), (sa), sizeof(*(sa)));             \
+            (sa) = arena_da_realoc((arena), (sa), da_size((sa)) + 1,          \
+                    sizeof(*(sa)));                                           \
         }                                                                     \
         (sa)[_DA_HDR(sa)->size++] = (x);                                      \
     } while(0)
+
 #define da_pop(sa) (assert(_DA_HDR(sa)->size), _DA_HDR(sa)->size--)
-#define LIBC_ALLOCATED 0x673e82d2 // echo -n realocate_stretch_array | md5sum
+
 #define da_free(da)                                                           \
     do {                                                                      \
         if (da) {                                                             \
@@ -61,7 +118,41 @@ typedef struct Dynamic_Array_Header {
         }                                                                     \
         (da) = NULL;                                                          \
     } while(0)
-#define DA_INITIAL_CAP 8
+
+#define da_append_many(da, items, num_items)                           \
+    do {                                                                      \
+        if((da) == NULL || da_size(da) + num_items > _DA_HDR(da)->cap) {      \
+            (da) = realocate_stretch_array((da), da_size(da) + num_items,     \
+                    sizeof(*(da)));                                           \
+            memcpy((da) + da_size(da), items, num_items*sizeof(*(da)));       \
+            da_size(da) += num_items;                                         \
+        }                                                                     \
+    } while(0)
+
+#define arena_da_append_many(arena, da, items, num_items)                     \
+    do {                                                                      \
+        if((da) == NULL || da_size(da) + num_items > _DA_HDR(da)->cap) {      \
+            (da) = arena_da_realoc((arena), (da), da_size(da) + num_items,    \
+                    sizeof(*(da)));                                           \
+            memcpy((da) + da_size(da), items, num_items*sizeof(*(da)));       \
+            _DA_HDR(da)->size += num_items;                                         \
+        }                                                                     \
+    } while(0)
+
+#define sb_append_cstr(sb, str)        \
+    do {                               \
+        assert(sizeof(*(sb)) == 1);    \
+        const char *macro_s = (str);               \
+        da_append_many((sb), macro_s, strlen(macro_s));  \
+    } while(0)
+
+#define arena_sb_append_cstr(arena, sb, str)                                  \
+    do {                                                                      \
+        assert(sizeof(*(sb)) == 1);                                           \
+        const char *macro_s = (str);                                          \
+        arena_da_append_many((arena), (sb), macro_s, strlen(macro_s));        \
+    } while(0)
+
 
 //
 // Arena
@@ -109,8 +200,8 @@ void   arena_status(Arena *a);
 #endif // COMMONS_H
 
 #ifdef COMMONS_IMPLEMENTATION
-
-global_variable const size_t stub_size = 0;
+#undef COMMONS_IMPLEMENTATION
+// global_variable const size_t stub_size = 0;
 
 internal Block *new_block(size_t desired)
 {
@@ -118,7 +209,7 @@ internal Block *new_block(size_t desired)
     size_t num_blocks = (to_allocate + BLOCK_SIZE - 1) / BLOCK_SIZE;
     to_allocate = num_blocks*BLOCK_SIZE;
 
-    Block *result = malloc(to_allocate);
+    Block *result = (Block *)malloc(to_allocate);
 
     result->capacity = to_allocate - sizeof(Block);
     result->next = NULL;
@@ -256,19 +347,20 @@ internal void *realocate_stretch_array(void *array, uint32_t desired,
     }
     assert(base);
 
-    void *new = (uint8_t *)base + sizeof(Dynamic_Array_Header);
+    void *new_array = (uint8_t *)base + sizeof(Dynamic_Array_Header);
 
-    _DA_HDR(new)->cap = new_cap;
+    _DA_HDR(new_array)->cap = new_cap;
 
-    return new;
+    return new_array;
 }
 
 #define ARENA_ALLOCATED 0x38fb1cf2 // echo -n arena_da_realoc | md5sum
-internal void *arena_da_realoc(Arena *a, void *array, size_t item_size)
+internal void *arena_da_realoc(Arena *a, void *array, size_t desired, size_t item_size)
 {
 
-    size_t new_cap = (array)? _DA_HDR(array)->cap *2 : 0;
-    if(new_cap < DA_INITIAL_CAP) new_cap = DA_INITIAL_CAP;
+    if(array && desired <= _DA_HDR(array)->cap) return array;
+    size_t new_cap = (array)?_DA_HDR(array)->cap : DA_INITIAL_CAP;
+    while(new_cap < desired ) new_cap = 2*new_cap;
 
     void *base;
     uint32_t new_size_in_bytes = new_cap * item_size +
@@ -288,11 +380,11 @@ internal void *arena_da_realoc(Arena *a, void *array, size_t item_size)
     }
     assert(base);
 
-    void *new = (uint8_t *)base + sizeof(Dynamic_Array_Header);
+    void *new_array = (uint8_t *)base + sizeof(Dynamic_Array_Header);
 
-    _DA_HDR(new)->cap = new_cap;
+    _DA_HDR(new_array)->cap = new_cap;
 
-    return new;
+    return new_array;
 }
 
 #endif

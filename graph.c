@@ -18,7 +18,7 @@
 #define NODE_RADIUS 40
 #define NODE_BORDER 4
 #define BACKGROUND_COLOR CLITERAL(Color){20,20,20,255}
-#define HOVER_COLOR CLITERAL(Color){40,40,40,255}
+#define HOVER_COLOR CLITERAL(Color){100,100,100,50}
 #define ORIGIN_COLOR CLITERAL(Color){255,255,255,255}
 #define HOVER_MARGIN 10
 #define CONTROL_RADIUS 6
@@ -90,6 +90,7 @@ enum IdType {
     IT_CRTL_PT2,
     IT_DRAWING,
     IT_WINDOW,
+    IT_PAN,
 
     IT_NONE = -1,
 };
@@ -161,6 +162,7 @@ int main(void)
     GraphCtx ctx;
     ctx.font = LoadFontEx("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", UI_FONT_SIZE, 0, 250);
     GuiLoadStyleDark();
+    // GuiSetFont(ctx.font);
 
     Camera2D camera = {0};
     camera.zoom = 1.0f;
@@ -180,11 +182,20 @@ int main(void)
     {
         da_append(edges, ((Edge){
             0, 1, {
-                { 100, -5},
+                { 100, -90},
                 {0, -120}
             },
             {0, 0},
             "hello"
+        }));
+
+        da_append(edges, ((Edge){
+            1, 0, {
+                { -80, -90},
+                {130, 0}
+            },
+            {0, 0},
+            "   "
         }));
 
         da_append(edges, ((Edge){
@@ -228,8 +239,10 @@ int main(void)
     Vector2 *attached_node = NULL;
     int active_tool = TI_CURSOR;
     Vector2 preview_node;
-    Rectangle drawing_area = {96, 0, SCREEN_WIDTH - 96, SCREEN_HEGHT};
+    Rectangle graphics_area = {96, 0, SCREEN_WIDTH - 96, SCREEN_HEGHT};
+    Vector2 mouseWorldPos = {96, 0};
     NodePropWnd nodewnd = {0};
+    bool gui_locked = false;
     // bool hovering = true;
 
 
@@ -238,12 +251,14 @@ int main(void)
     while(!WindowShouldClose()) {
         // camera.zoom += (int)(GetMouseWheelMove()*scrollSpeed);
         {
-            float new_zoom = camera.zoom + ((float)GetMouseWheelMove()*0.05f);
+            float new_zoom = camera.zoom * (1.0f + (float)GetMouseWheelMove()*0.15f);
             if(new_zoom < 0.05f) new_zoom = 0.05f;
+            if(new_zoom > 800.0f) new_zoom = 800.0f;
             float s = (new_zoom - camera.zoom)/(new_zoom*camera.zoom);
             camera.target = Vector2Add(camera.target, Vector2Scale(GetMousePosition(), s));
             camera.zoom = new_zoom;
         }
+
         // pan control
         if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
         {
@@ -252,12 +267,30 @@ int main(void)
             camera.target = Vector2Add(camera.target, delta);
         }
 
-        Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
+        // dirty hack: stop update mouseWorldPos when out of graphics area
+        // TODO: study how to disable intractions with graphcs objects that
+        // would be visible inside non graphics regions of the screen.
+        //  - virtual mouse click:
+        //      replace IsMouseButtonPressed and similiar with a virtual version
+        //      buttonPressedVirtual(). they are masket to false when outside
+        //       - disadvantage: if I'm interacting with an object inside graphics
+        //         region, and moove out of GA, the curent development with
+        //         object is lost.
+        // - trap the mouse within graphics region until interaction is over.
+
+        if (CheckCollisionPointRec(GetMousePosition(), graphics_area))
+            mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
 
         if (IsKeyPressed(KEY_D)) {
             // TraceLog(LOG_DEBUG, "item active/focused: %d, %d, %d", ctx.id_type, ctx.active, ctx.focused);
             TraceLog(LOG_DEBUG, "camera zoom %f", camera.zoom);
             // TraceLog(LOG_DEBUG, "wheel %f", GetMouseWheelMove());
+        }
+
+        if (gui_locked) {
+            GuiLock();
+        } else {
+            GuiUnlock();
         }
 
         if (active_tool == TI_CURSOR) {
@@ -379,6 +412,8 @@ int main(void)
                 edges[ctx.active].ctrl[ctx.id_type - IT_CRTL_PT1] = new_ctrl_pos;
             }
         } else
+
+        // add node
         if (active_tool == TI_ADD_NODE) {
             if (ctx.active < 0) {
                 ctx.focused = -1;
@@ -388,7 +423,7 @@ int main(void)
             preview_node = mouseWorldPos;
             if (ctx.id_type == IT_DRAWING && ctx.active == 0) {
                 if(IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
-                    if (CheckCollisionPointRec(GetMousePosition(), drawing_area)){
+                    if (CheckCollisionPointRec(GetMousePosition(), graphics_area)){
                         // da_append(nodes, mouseWorldPos);
                         TraceLog(LOG_DEBUG, "node placed at: %f, %f", preview_node.x, preview_node.y);
                     }
@@ -397,7 +432,7 @@ int main(void)
                     ctx.active = -1;
                 }
             }
-            if(CheckCollisionPointRec(GetMousePosition(), drawing_area))
+            if(CheckCollisionPointRec(GetMousePosition(), graphics_area))
             {
                 focus(IT_DRAWING, 0);
             }
@@ -409,7 +444,7 @@ int main(void)
             }
         }
 
-
+        gui_locked = (ctx.id_type != -1 && ctx.active != -1);
 
 
         // ########################## DRAWING #########################################
@@ -418,9 +453,9 @@ int main(void)
 
             ClearBackground(BACKGROUND_COLOR);
 
-            DrawLine(drawing_area.x, 0, drawing_area.x, drawing_area.height, BORDER_COLOR);
+            DrawLine(graphics_area.x, 0, graphics_area.x, graphics_area.height, BORDER_COLOR);
 
-            BeginScissorMode(drawing_area.x, drawing_area.y, drawing_area.width, drawing_area.height);
+            BeginScissorMode(graphics_area.x, graphics_area.y, graphics_area.width, graphics_area.height);
             // draw origin
             Vector2 origin = GetWorldToScreen2D((Vector2){0}, camera);
             DrawLine(origin.x - ORIGIN_LINE_LEN/2, origin.y, origin.x + ORIGIN_LINE_LEN/2, origin.y, ORIGIN_COLOR);
