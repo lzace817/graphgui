@@ -124,9 +124,9 @@ typedef struct Dynamic_Array_Header {
         if((da) == NULL || da_size(da) + num_items > _DA_HDR(da)->cap) {      \
             (da) = realocate_stretch_array((da), da_size(da) + num_items,     \
                     sizeof(*(da)));                                           \
-            memcpy((da) + da_size(da), items, num_items*sizeof(*(da)));       \
-            da_size(da) += num_items;                                         \
         }                                                                     \
+        memcpy((da) + da_size(da), items, num_items*sizeof(*(da)));           \
+        da_size(da) += num_items;                                             \
     } while(0)
 
 #define arena_da_append_many(arena, da, items, num_items)                     \
@@ -134,16 +134,16 @@ typedef struct Dynamic_Array_Header {
         if((da) == NULL || da_size(da) + num_items > _DA_HDR(da)->cap) {      \
             (da) = arena_da_realoc((arena), (da), da_size(da) + num_items,    \
                     sizeof(*(da)));                                           \
-            memcpy((da) + da_size(da), items, num_items*sizeof(*(da)));       \
-            _DA_HDR(da)->size += num_items;                                         \
         }                                                                     \
+        memcpy((da) + da_size(da), items, num_items*sizeof(*(da)));           \
+        _DA_HDR(da)->size += num_items;                                       \
     } while(0)
 
-#define sb_append_cstr(sb, str)        \
-    do {                               \
-        assert(sizeof(*(sb)) == 1);    \
-        const char *macro_s = (str);               \
-        da_append_many((sb), macro_s, strlen(macro_s));  \
+#define sb_append_cstr(sb, str)                                               \
+    do {                                                                      \
+        assert(sizeof(*(sb)) == 1);                                           \
+        const char *macro_s = (str);                                          \
+        da_append_many((sb), macro_s, strlen(macro_s));                       \
     } while(0)
 
 #define arena_sb_append_cstr(arena, sb, str)                                  \
