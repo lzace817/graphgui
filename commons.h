@@ -7,10 +7,10 @@
     ## dynamic arrays
 
     using libc:
-    - da_append(sa, x)
+    - da_append(da, x)
     - da_append_many(da, items, num_items)
     - da_size(da)
-    - da_pop(sa)
+    - da_pop(da)
     - da_free(da)
     - sb_append_cstr(sb, str)
 
@@ -20,7 +20,7 @@
     ```
 
     and the version using arena as allocator
-    - arena_da_append(arena, sa, x)
+    - arena_da_append(arena, da, x)
     - arena_da_append_many(arena, da, items, num_items)
     - arena_sb_append_cstr(arena, sb, str)
 
@@ -81,32 +81,32 @@ typedef struct Dynamic_Array_Header {
 #define DA_INITIAL_CAP 8
 #define LIBC_ALLOCATED 0x673e82d2 // echo -n realocate_stretch_array | md5sum
 
-#define _DA_HDR(sa) ((Dynamic_Array_Header*)((uintptr_t)(sa) -                \
+#define _DA_HDR(da) ((Dynamic_Array_Header*)((uintptr_t)(da) -                \
         sizeof(Dynamic_Array_Header)))
 
 #define da_size(da) (*(((da))?&(_DA_HDR((da))->size) : &DUMMY_SIZE_T))
 
-#define da_end(sa) ((sa) + da_size(sa))
+#define da_end(da) ((da) + da_size(da))
 
-#define da_append(sa, x)                                                      \
+#define da_append(da, x)                                                      \
     do {                                                                      \
-        if((sa) == NULL || !(_DA_HDR((sa))->size + 1 <= _DA_HDR((sa))->cap)) {\
-            (sa) = realocate_stretch_array((sa), da_size(sa) + 1,             \
-                    sizeof(*(sa)));                                           \
+        if((da) == NULL || !(_DA_HDR((da))->size + 1 <= _DA_HDR((da))->cap)) {\
+            (da) = realocate_stretch_array((da), da_size(da) + 1,             \
+                    sizeof(*(da)));                                           \
         }                                                                     \
-        (sa)[_DA_HDR(sa)->size++] = (x);                                      \
+        (da)[_DA_HDR(da)->size++] = (x);                                      \
     } while(0)
 
-#define arena_da_append(arena, sa, x)                                         \
+#define arena_da_append(arena, da, x)                                         \
     do {                                                                      \
-        if((sa) == NULL || !(_DA_HDR((sa))->size < _DA_HDR((sa))->cap)) {     \
-            (sa) = arena_da_realoc((arena), (sa), da_size((sa)) + 1,          \
-                    sizeof(*(sa)));                                           \
+        if((da) == NULL || !(_DA_HDR((da))->size < _DA_HDR((da))->cap)) {     \
+            (da) = arena_da_realoc((arena), (da), da_size((da)) + 1,          \
+                    sizeof(*(da)));                                           \
         }                                                                     \
-        (sa)[_DA_HDR(sa)->size++] = (x);                                      \
+        (da)[_DA_HDR(da)->size++] = (x);                                      \
     } while(0)
 
-#define da_pop(sa) (assert(_DA_HDR(sa)->size), _DA_HDR(sa)->size--)
+#define da_pop(da) (assert(_DA_HDR(da)->size), _DA_HDR(da)->size--)
 
 #define da_free(da)                                                           \
     do {                                                                      \
@@ -119,7 +119,7 @@ typedef struct Dynamic_Array_Header {
         (da) = NULL;                                                          \
     } while(0)
 
-#define da_append_many(da, items, num_items)                           \
+#define da_append_many(da, items, num_items)                                  \
     do {                                                                      \
         if((da) == NULL || da_size(da) + num_items > _DA_HDR(da)->cap) {      \
             (da) = realocate_stretch_array((da), da_size(da) + num_items,     \
