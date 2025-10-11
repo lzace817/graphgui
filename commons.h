@@ -57,7 +57,7 @@
 #define global_variable static
 
 // NOTE: would be interesting to have some sort of compile time
-// warning if compiler dectect we are assigning to dummy size_t
+// warning if compiler dectects assignments to dummy size_t
 #define DUMMY_SIZE_T ((size_t){0})
 
 #define TODO(msg) do{fprintf(stderr, "%s:%i: TODO: " msg "\n", __FILE__,      \
